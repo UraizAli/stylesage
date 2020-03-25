@@ -79,8 +79,8 @@ class MarkaVIPSpider(SSBaseSpider):
     def parse_products(self, response):
         for product in response.css('#J-pro-list > li'):
             item = ProductItem(
-                url=response.urljoin(product.css('a::attr(href)').get()),
-                base_sku=product.css('::attr(data-gid)').get(),
+                url=response.urljoin(product.css('a::attr(href)').extract_first()),
+                base_sku=product.css('::attr(data-gid)').extract_first(),
                 referer_url=response.url,
                 category_names=response.meta.get('categories', []),
                 language_code='en',
@@ -99,6 +99,7 @@ class MarkaVIPSpider(SSBaseSpider):
         if next_page:
             url = response.urljoin(next_page)
             return Request(url, self.parse_products, meta=response.meta)
+        return
 
     def parse_product_detail(self, response):
         item = deepcopy(response.meta['item'])
