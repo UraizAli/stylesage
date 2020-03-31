@@ -228,7 +228,7 @@ class LocasteSpider(SSBaseSpider):
     ]
 
     tr_locaste_spider = TrLocasteSpider()
-    Jp_locaste_spider = JpLocasteSpider()
+    jp_locaste_spider = JpLocasteSpider()
 
     def start_requests(self):
         for country_code, language_code, currency, url in self.countries:
@@ -240,4 +240,4 @@ class LocasteSpider(SSBaseSpider):
             if country_code is not 'jp':
                 yield Request(url, callback=self.tr_locaste_spider.parse_homepage, meta=meta)
             else:
-                yield Request(url, callback=self.Jp_locaste_spider.parse_homepage, meta=meta)
+                yield Request(url, callback=self.jp_locaste_spider.parse_homepage, meta=meta)
