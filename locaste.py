@@ -1,23 +1,33 @@
 # coding: utf-8
 """
-Scrapy spider for Marc Jacobs.
-
 @author: Uraiz ali
 """
 from copy import deepcopy
 
-from scrapy import Request, Selector
+from scrapy import Request
 
 from scrapyproduct.items import ProductItem, SizeItem
 from scrapyproduct.spiderlib import SSBaseSpider
-from scrapyproduct.toolbox import (category_mini_item, category_requests, extract_links,
-                                   extract_text_nodes)
+from scrapyproduct.toolbox import (category_mini_item)
 
 
-class JpLocasteSpider():
+class JpLocasteSpider(SSBaseSpider):
+    country = ''
+    seen_base_sku = set()
+    countries = [
+        ('jp', 'ja', 'JPY', 'https://www.lacoste.jp')
+    ]
+
+    def start_requests(self):
+        for country_code, language_code, currency, url in self.countries:
+            meta = {
+                'country_code': country_code,
+                'currency': currency,
+                'language_code': language_code,
+            }
+            yield Request(url, callback=self.parse_homepage, meta=meta)
 
     def parse_homepage(self, response):
-
         for level1 in response.css('.htmlElements__Ul-sc-1e1gdav-4 li'):
             label1 = level1.css(
                 '.text__TextBase-wvjikk-0::text').extract_first()
@@ -36,20 +46,22 @@ class JpLocasteSpider():
                     if url2:
                         yield self.make_request(response, url2, [label1, label2, label3])
 
-        catogaries_urls = response.css(
+        categories_urls = response.css(
             '.text__MenuLinkCondensed-wvjikk-16.SidebarItem__MenuLink-dys11-6::attr(href)').extract()
-        for url in catogaries_urls:
+        for url in categories_urls:
             catogaries = url.split('/')
             yield self.make_request(response, url, catogaries)
 
     def make_request(self, response, url, catogaries):
-        meta = response.meta
-        meta['categories'] = catogaries
-        return Request(response.urljoin(url), callback=self.parse_product, meta=meta)
+        if url:
+            meta = deepcopy(response.meta)
+            meta['categories'] = catogaries
+            return Request(response.urljoin(url), callback=self.parse_product, meta=meta)
+        return
 
     def parse_product(self, response):
         product_urls = response.css(
-            '.htmlElements__ABlock-sc-1e1gdav-3.cWDwrI::attr(href)').extract()
+            '.htmlElements__ABlock-sc-1e1gdav-3::attr(href)').extract()
 
         for url in product_urls:
             base_sku = url.split('/')[2]
@@ -65,7 +77,9 @@ class JpLocasteSpider():
             )
             yield category_mini_item(item)
 
-            yield Request(item['url'], callback=self.parse_detail, meta={'item': item})
+            if base_sku not in self.seen_base_sku:
+                yield Request(item['url'], callback=self.parse_detail, meta={'item': item})
+                self.seen_base_sku.add(base_sku)
 
         yield self.parse_pagination(response)
 
@@ -80,8 +94,10 @@ class JpLocasteSpider():
 
         item['title'] = response.css(
             '.text__H1-wvjikk-2::text').extract_first()
-        item['full_price_text'] = response.css(
-            '.Price__PriceWrapper-sc-1tbjaoc-3.kmzMLF span::text').extract_first()
+        item['old_price_text'] = response.css(
+            '.Price__PriceWrapper-sc-1tbjaoc-3.kmzMLF span:nth-child(1)::text').extract_first()
+        item['new_price_text'] = response.css(
+            '.Price__PriceWrapper-sc-1tbjaoc-3.kmzMLF span:nth-child(2)::text').extract_first()
         item['description_text'] = response.css(
             '.text__P-wvjikk-8.gwLbpb::text').extract()
 
@@ -118,34 +134,46 @@ class JpLocasteSpider():
         return size_info
 
 
-class TrLocasteSpider():
+class TrLocasteSpider(SSBaseSpider):
+    country = ''
+    seen_base_sku = set()
+    countries = [
+        ('tr', 'TRY', 'tr', 'https://www.lacoste.com.tr/')
+    ]
+
+    def start_requests(self):
+        for country_code, language_code, currency, url in self.countries:
+            meta = {
+                'country_code': country_code,
+                'currency': currency,
+                'language_code': language_code,
+            }
+            yield Request(url, callback=self.parse_homepage, meta=meta)
 
     def parse_homepage(self, response):
         for level1 in response.css('.js-navigation.navigation-list li'):
             label1 = level1.css('a span::text').extract_first()
             url1 = level1.css('a::attr(href)').extract_first()
-            if url1:
-                yield self.make_request(response, url1, [label1])
+            yield self.make_request(response, url1, [label1])
 
             for level2 in level1.css('.page-sidebar__lists div div ul'):
                 label2 = level2.css('.hero a::text').extract_first()
                 url2 = level2.css('.hero a::attr(href)').extract_first()
-                if url2:
-                    yield self.make_request(response, url1, [label1, label2])
+                yield self.make_request(response, url2, [label1, label2])
 
                 for level3 in level1.css('.page-sidebar__lists div div ul'):
                     label3 = level3.css('li a::text').extract_first()
                     url3 = level3.css('li a::attr(href)').extract_first()
-                    if url3:
-                        yield self.make_request(response, url3, [label1, label2, label3])
+                    yield self.make_request(response, url3, [label1, label2, label3])
 
     def make_request(self, response, url, catogaries):
-        meta = response.meta
-        meta['categories'] = catogaries
-        return Request(response.urljoin(url), callback=self.parse_product, meta=meta)
+        if url:
+            meta = deepcopy(response.meta)
+            meta['categories'] = catogaries
+            return Request(response.urljoin(url), callback=self.parse_product, meta=meta)
+        return
 
     def parse_product(self, response):
-
         for product in response.css('.product-item-box'):
             url = product.css(
                 '.product-item-image-link::attr(href)').extract_first()
@@ -162,7 +190,10 @@ class TrLocasteSpider():
                 currency=response.meta.get('currency')
             )
             yield category_mini_item(item)
-            yield Request(item['url'], callback=self.parse_detail, meta={'item': item})
+
+            if base_sku not in self.seen_base_sku:
+                yield Request(item['url'], callback=self.parse_detail, meta={'item': item})
+                self.seen_base_sku.add(base_sku)
 
         yield self.parse_pagination(response)
 
@@ -213,31 +244,14 @@ class TrLocasteSpider():
         return size_info
 
 
-class LocasteSpider(SSBaseSpider):
+class LocasteSpider(JpLocasteSpider, TrLocasteSpider):
     name = 'laoste'
     long_name = 'lacoste.com'
     base_url = 'http://www.lacoste.com/'
-    max_stock_level = 10000
     version = '1.0.0'
-
-    brand = 'lacoste-brand'
-
-    countries = [
-        ('tr', 'TRY', 'tr', 'https://www.lacoste.com.tr/'),
-        ('jp', 'ja', 'JPY', 'https://www.lacoste.jp'),
-    ]
-
-    tr_locaste_spider = TrLocasteSpider()
-    jp_locaste_spider = JpLocasteSpider()
+    country = ''
 
     def start_requests(self):
-        for country_code, language_code, currency, url in self.countries:
-            meta = {
-                'country_code': country_code,
-                'currency': currency,
-                'language_code': language_code,
-            }
-            if country_code is not 'jp':
-                yield Request(url, callback=self.tr_locaste_spider.parse_homepage, meta=meta)
-            else:
-                yield Request(url, callback=self.jp_locaste_spider.parse_homepage, meta=meta)
+        for base in self.__class__.__bases__:
+            for req in base.start_requests(self):
+                yield req
