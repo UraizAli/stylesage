@@ -11,11 +11,7 @@ from scrapy import Request
 
 from scrapyproduct.items import ProductItem, SizeItem
 from scrapyproduct.spiderlib import SSBaseSpider
-from scrapyproduct.toolbox import (
-    register_deliveryregion,
-    category_mini_item,
-    extract_text_nodes,
-)
+from scrapyproduct.toolbox import (category_mini_item, extract_links)
 
 
 class MarkaVIPSpider(SSBaseSpider):
@@ -25,6 +21,7 @@ class MarkaVIPSpider(SSBaseSpider):
     base_url = 'https://markavip.com/'
 
     single_item_test = False
+    seen_base_sku = set()
 
     country = ''
     version = '1.0.0'
@@ -54,32 +51,29 @@ class MarkaVIPSpider(SSBaseSpider):
 
     def parse_homepage(self, response):
         for level1 in response.css('.header-nav-wrap li'):
-            titel1 = level1.css('.nav-item::text').extract_first()
-            url1 = level1.css('.nav-item::attr(href)').extract_first()
-            yield self.make_requests(response, url1, [titel1])
+            title1, url1 = extract_links(level1.css('.nav-item'))[0]
+            yield self.make_requests(response, url1, [title1])
 
             for level2 in level1.css('dl'):
-                title2 = level2.css('.fn-bold a::text').extract_first()
-                url2 = level2.css('.fn-bold a::attr(href)').extract_first()
-                yield self.make_requests(response, url2, [titel1, title2])
+                title2, url2 = extract_links(level1.css('.fn-bold a'))[0]
+                yield self.make_requests(response, url2, [title1, title2])
 
                 for level3 in level2.css('dd:not(.fn-bold) a'):
-                    title3 = level3.css('::text').extract_first()
-                    url3 = level3.css('::attr(href)').extract_first()
-                    yield self.make_requests(response, url3, [titel1, title2, title3])
+                    title3, url3 = extract_links(level1.css(level3))[0]
+                    yield self.make_requests(response, url3, [title1, title2, title3])
 
     def make_requests(self, response, url, categories):
-        meta = response.meta
+        meta = deepcopy(response.meta)
         if self.is_valid_url(url):
             meta['categories'] = categories
             return Request(response.urljoin(url), self.parse_products, meta=meta)
-        return
 
     def parse_products(self, response):
         for product in response.css('#J-pro-list > li'):
             item = ProductItem(
-                url=response.urljoin(product.css('a::attr(href)').get()),
-                base_sku=product.css('::attr(data-gid)').get(),
+                url=response.urljoin(product.css(
+                    'a::attr(href)').extract_first()),
+                base_sku=product.css('::attr(data-gid)').extract_first(),
                 referer_url=response.url,
                 category_names=response.meta.get('categories', []),
                 language_code='en',
@@ -88,7 +82,9 @@ class MarkaVIPSpider(SSBaseSpider):
                 currency=response.meta.get('currency')
             )
             yield category_mini_item(item)
-
+            if item['base_sku'] in self.seen_base_sku:
+                continue
+            self.seen_base_sku.add(item['base_sku'])
             yield Request(item['url'], self.parse_product_detail, meta={'item': item})
 
         yield self.parse_pagination(response)
@@ -101,24 +97,30 @@ class MarkaVIPSpider(SSBaseSpider):
 
     def parse_product_detail(self, response):
         item = response.meta['item']
-        currency = response.css('.currency-site::text').extract_first()
-        if currency:
-            item['currency'] = currency
         item['title'] = response.css('[itemprop="name"]::text').extract_first()
-        item['identifier'] = response.css('[itemprop="identifier"]::text').extract_first()
-        item['description_text'] = response.css('#detailHtml span::text').extract()
-        item['full_price_text'] = response.css('.J-sku-price span::text').extract_first()
-        item['old_price_text'] = response.css('.org-price-box  del::text').extract_first()
-        
-        color_ids = response.xpath("//span[@data-key='Color']/@data-attrid").extract()
+        item['identifier'] = response.css(
+            '[itemprop="identifier"]::text').extract_first()
+        item['description_text'] = response.css(
+            '#detailHtml span::text').extract()
+
+        item['full_price_text'] = response.css(
+            '.J-sku-price span::text').extract_first()
+        item['old_price_text'] = response.css(
+            '.org-price-box  del::text').extract_first()
+        color_ids = response.xpath(
+            "//span[@data-key='Color']/@data-attrid").extract()
         item['use_size_level_prices'] = False
+
+        self.get_currency(response)
+
         for color_id in color_ids:
             color_item = deepcopy(item)
-            color_item['identifier'] = "{}_{}".format(item['identifier'], color_id)
+            color_item['identifier'] = "{}_{}".format(
+                item['identifier'], color_id)
             color_name_path = "//span[@data-key='Color' and @data-attrid='{}']/a/text()".format(
                 color_id)
-            color_item['color_name'] = response.xpath(color_name_path).extract_first('').strip()
-            color_item['image_urls'] = response.css('.goods-loading::attr(src)').getall()
+            color_item['color_name'] = response.xpath(
+                color_name_path).extract_first('').strip()
 
             self.get_image_urls(response, color_id, color_item, color_ids)
             self.get_size_infos(response, color_item)
@@ -129,8 +131,7 @@ class MarkaVIPSpider(SSBaseSpider):
         return url if 'javascript' not in url else None
 
     def get_size_infos(self, response, color_item):
-        sizes = response.css('.J-size-list a::text').extract()
-        sizes = sizes or ['one_size']
+        sizes = response.css('.J-size-list a::text').extract() or ['one_size']
         for size in sizes:
             size_info = SizeItem(
                 size_name=size,
@@ -149,3 +150,9 @@ class MarkaVIPSpider(SSBaseSpider):
         if not color_item['image_urls'] or len(color_ids) == 1:
             color_item['image_urls'] = [img.replace('t.jpg', '.jpg').split('_')[0]
                                         for img in response.css('.goods-loading::attr(src)').extract()]
+
+    def get_currency(self, response):
+        item = response.meta['item']
+        currency = response.css('.currency-site::text').extract_first()
+        if currency:
+            item['currency'] = currency
